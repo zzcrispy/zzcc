@@ -2,19 +2,10 @@ import SwiftUI
 
 /// 小日记首页的交互骨架。
 ///
-/// 默认显示主视觉，点击日记区域后播放一次翻书动画，再进入内页占位。
+/// 点击主视觉进入阅读层，由阅读层完成翻书和内页渐显；返回使用原生右滑。
 struct DiaryView: View {
-    private enum Phase {
-        case idle
-        case opening
-        case opened
-    }
-
-    @State private var phase: Phase = .idle
-
-    private var isBookOpen: Bool {
-        phase == .opened
-    }
+    @State private var isReading = false
+    @State private var isOpeningReader = false
 
     var body: some View {
         ZStack {
@@ -31,36 +22,34 @@ struct DiaryView: View {
                 diaryProfileSwitcher
             }
             .padding(.horizontal, 24)
-
-            if phase == .opening {
-                DiaryAnimationSlot {
-                    finishOpening()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea(.all)
-                .zIndex(10)
-                .accessibilityHidden(true)
-            }
-
-            if phase == .opened {
-                DiaryPagesView(onClose: closeBook)
-                    .transition(.opacity)
-                    .zIndex(5)
-            }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(DiaryTheme.background, for: .navigationBar)
-        .toolbar(phase == .opening || phase == .opened ? .hidden : .visible, for: .navigationBar)
-        .statusBarHidden(phase == .opening || phase == .opened)
+        // 封面使用系统导航栏；内页在自己的导航层级中隐藏它。
+        .toolbar(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("日记形象", systemImage: "square.grid.2x2") { }
                     .labelStyle(.iconOnly)
                     .accessibilityLabel("日记形象")
             }
-
+        }
+        .navigationDestination(isPresented: $isReading) {
+            DiaryReaderView(onClose: closeBook) {
+                isOpeningReader = false
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            .toolbar(.hidden, for: .tabBar)
+            .statusBarHidden(false)
+        }
+        .transaction { transaction in
+            // 仅关闭进入阅读层的系统推入转场，不影响阅读完成后的原生右滑返回。
+            if isReading && isOpeningReader {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
         }
     }
 
@@ -69,18 +58,15 @@ struct DiaryView: View {
             openBook()
         } label: {
             ZStack {
-                DiaryBookStage(
-                    isOpen: isBookOpen,
-                    isOpening: phase == .opening
-                )
+                DiaryBookStage()
             }
             .frame(maxWidth: .infinity)
             .frame(height: 560)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(phase != .idle)
-        .accessibilityLabel(isBookOpen ? "日记内页" : "打开小日记")
+        .disabled(isReading)
+        .accessibilityLabel("打开小日记")
     }
 
     private var diaryProfileSwitcher: some View {
@@ -124,29 +110,31 @@ struct DiaryView: View {
     }
 
     private func openBook() {
-        guard phase == .idle else { return }
+        guard !isReading else { return }
 
-        withAnimation(.easeInOut(duration: 0.22)) {
-            phase = .opening
-        }
-    }
-
-    private func finishOpening() {
-        guard phase == .opening else { return }
-
-        withAnimation(.easeInOut(duration: 0.36)) {
-            phase = .opened
+        // 先无动画进入阅读层，在同一层里播放 JSON 并渐显内页。
+        // 动画结束时不再切换导航层级，避免内页突然出现或尺寸跳变。
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isOpeningReader = true
+            isReading = true
         }
     }
 
     private func closeBook() {
-        withAnimation(.easeInOut(duration: 0.32)) {
-            phase = .idle
+        guard isReading else { return }
+
+        // 原生导航 pop：内页从左向右滑出，封面从后方露出。
+        // 不改变透明度、不缩放，也不额外添加与左右翻页竞争的拖动手势。
+        withAnimation(.default) {
+            isReading = false
         }
     }
 }
 
 enum DiaryTheme {
+    static let pageBackground = Color(red: 1.0, green: 246.0 / 255.0, blue: 239.0 / 255.0) // #FFF6EF
     static let background = Color(red: 0.96, green: 0.945, blue: 0.925)
     static let secondaryText = Color.black.opacity(0.48)
     static let profileCard = Color(red: 0.58, green: 0.53, blue: 0.48).opacity(0.66)
