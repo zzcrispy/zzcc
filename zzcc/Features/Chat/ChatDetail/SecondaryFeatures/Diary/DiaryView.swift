@@ -58,7 +58,7 @@ struct DiaryView: View {
             openBook()
         } label: {
             ZStack {
-                DiaryBookStage()
+                DiaryBookStage(isActive: !isReading)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 560)
